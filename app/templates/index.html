@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>F1 Grid · {{ grid.season }} championship</title>
+  <style>
+    :root {
+      --bg: #07080c;
+      --panel: #10131a;
+      --line: #242a36;
+      --red: #e10600;
+      --ink: #f4f1ea;
+      --muted: #9aa3b2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(225,6,0,0.08), transparent 28%),
+        var(--bg);
+      color: var(--ink);
+      font: 15px/1.4 "Segoe UI", "Helvetica Neue", sans-serif;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+      padding: 28px 8vw 18px;
+      border-bottom: 3px solid var(--red);
+    }
+    .mark { font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; font-size: 13px; color: var(--red); }
+    h1 { font-size: 28px; letter-spacing: -0.03em; margin-top: 4px; }
+    .meta { text-align: right; color: var(--muted); font-size: 13px; }
+    .badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .live { border-color: #2f9e44; color: #7dffa3; }
+    .fallback { border-color: #c9a227; color: #f0d36c; }
+    main {
+      display: grid;
+      grid-template-columns: 1.4fr 0.8fr;
+      gap: 24px;
+      padding: 24px 8vw 48px;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .pos { width: 42px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .code { font-weight: 700; letter-spacing: 0.08em; }
+    .pts { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .p1 td { background: rgba(225,6,0,0.12); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 20px;
+    }
+    .card h2 { font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .race-name { font-size: 22px; font-weight: 700; }
+    .race-place { color: var(--muted); margin: 6px 0 14px; }
+    footer { padding: 0 8vw 28px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 800px) {
+      header, main { padding-left: 20px; padding-right: 20px; }
+      main { grid-template-columns: 1fr; }
+      .meta { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="mark">F1 Grid</div>
+      <h1>World Championship {{ grid.season }}</h1>
+    </div>
+    <div class="meta">
+      After round {{ grid.round }}<br />
+      <span class="badge {{ grid.source }}">{{ grid.source }} data</span>
+    </div>
+  </header>
+  <main>
+    <section>
+      <table>
+        <thead>
+          <tr>
+            <th>Pos</th>
+            <th>Driver</th>
+            <th>Team</th>
+            <th>Wins</th>
+            <th>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in grid.drivers %}
+          <tr class="{% if d.position == 1 %}p1{% endif %}">
+            <td class="pos">{{ d.position }}</td>
+            <td><span class="code">{{ d.code }}</span> {{ d.name }}</td>
+            <td>{{ d.team }}</td>
+            <td>{{ d.wins }}</td>
+            <td class="pts">{{ d.points | int }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    <aside>
+      {% if grid.next_race %}
+      <div class="card">
+        <h2>Next race · R{{ grid.next_race.round }}</h2>
+        <div class="race-name">{{ grid.next_race.name }}</div>
+        <div class="race-place">{{ grid.next_race.circuit }} · {{ grid.next_race.locality }}, {{ grid.next_race.country }}</div>
+        <div>{{ grid.next_race.date }} {{ grid.next_race.time }}</div>
+      </div>
+      {% endif %}
+    </aside>
+  </main>
+  <footer>Live results from Jolpica / Ergast. Fallback snapshot ships in the image if the API is unreachable.</footer>
+</body>
+</html>

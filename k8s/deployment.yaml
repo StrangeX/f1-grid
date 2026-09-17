@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: f1-grid
+  namespace: f1-grid
+  labels:
+    app: f1-grid
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: f1-grid
+  template:
+    metadata:
+      labels:
+        app: f1-grid
+    spec:
+      containers:
+        - name: f1-grid
+          image: f1-grid:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: f1-grid-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10

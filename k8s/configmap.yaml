@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: f1-grid-config
+  namespace: f1-grid
+data:
+  F1_SEASON: "current"
+  F1_CACHE_TTL: "300"
