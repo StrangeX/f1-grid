@@ -1,101 +1,78 @@
 from __future__ import annotations
 
-import json
-import os
-import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+import asyncio
 
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
-APP_DIR = Path(__file__).resolve().parent
-FALLBACK_PATH = APP_DIR / "data" / "fallback.json"
-TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
+from app import cache, settings
+from app.brief import ask, full_analysis, get_brief
+from app.grid import get_grid
+from app.refresh import LOCK_KEY, poll_forever, sync_standings
 
-API_BASE = os.getenv("F1_API_BASE", "https://api.jolpi.ca/ergast/f1").rstrip("/")
-SEASON = os.getenv("F1_SEASON", "current")
-CACHE_TTL_SEC = int(os.getenv("F1_CACHE_TTL", "300"))
-
-app = FastAPI(title="F1 Grid", version="1.0.0")
-
-_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
+TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
 
-def _load_fallback() -> dict[str, Any]:
-    return json.loads(FALLBACK_PATH.read_text(encoding="utf-8"))
+class AskBody(BaseModel):
+    question: str = Field(min_length=2, max_length=240)
 
 
-def _driver_row(item: dict[str, Any]) -> dict[str, Any]:
-    driver = item.get("Driver", {})
-    constructors = item.get("Constructors") or [{}]
-    return {
-        "position": int(item.get("position", 0)),
-        "code": driver.get("code", ""),
-        "name": f"{driver.get('givenName', '')} {driver.get('familyName', '')}".strip(),
-        "team": constructors[0].get("name", ""),
-        "points": float(item.get("points", 0)),
-        "wins": int(item.get("wins", 0)),
-    }
-
-
-def _parse_standings(raw: dict[str, Any]) -> tuple[str, str, list[dict[str, Any]]]:
-    table = raw["MRData"]["StandingsTable"]
-    listing = table["StandingsLists"][0]
-    drivers = [_driver_row(row) for row in listing.get("DriverStandings", [])]
-    return str(listing.get("season", SEASON)), str(listing.get("round", "")), drivers
-
-
-def _parse_next_race(raw: dict[str, Any]) -> dict[str, Any] | None:
-    races = raw.get("MRData", {}).get("RaceTable", {}).get("Races") or []
-    if not races:
-        return None
-    race = races[0]
-    circuit = race.get("Circuit", {})
-    location = circuit.get("Location", {})
-    return {
-        "round": str(race.get("round", "")),
-        "name": race.get("raceName", ""),
-        "circuit": circuit.get("circuitName", ""),
-        "locality": location.get("locality", ""),
-        "country": location.get("country", ""),
-        "date": race.get("date", ""),
-        "time": race.get("time", ""),
-    }
-
-
-async def _fetch_live() -> dict[str, Any]:
-    timeout = httpx.Timeout(8.0, connect=4.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        standings_url = f"{API_BASE}/{SEASON}/driverStandings.json"
-        next_url = f"{API_BASE}/{SEASON}/next.json"
-        standings_res, next_res = await client.get(standings_url), await client.get(next_url)
-        standings_res.raise_for_status()
-        next_res.raise_for_status()
-        season, round_no, drivers = _parse_standings(standings_res.json())
-        return {
-            "season": season,
-            "round": round_no,
-            "source": "live",
-            "drivers": drivers,
-            "next_race": _parse_next_race(next_res.json()),
-        }
-
-
-async def get_grid() -> dict[str, Any]:
-    now = time.time()
-    if _cache["payload"] and now - _cache["ts"] < CACHE_TTL_SEC:
-        return _cache["payload"]
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     try:
-        payload = await _fetch_live()
+        await cache.init()
     except Exception:
-        payload = _load_fallback()
-        payload["source"] = "fallback"
-    _cache["ts"] = now
-    _cache["payload"] = payload
-    return payload
+        pass
+    poller = asyncio.create_task(poll_forever())
+    yield
+    poller.cancel()
+    try:
+        await poller
+    except asyncio.CancelledError:
+        pass
+    await cache.release_lock(LOCK_KEY)
+    await cache.close()
+
+
+app = FastAPI(title="F1 Grid", version="1.4.0", lifespan=lifespan)
+
+
+def _rows(items: list[dict], extra: dict[str, dict], key: str) -> list[dict]:
+    rows = []
+    for item in items:
+        row = dict(item)
+        info = extra.get(item.get(key) or "") or {}
+        row["gap"] = info.get("gap", 0)
+        row["still_in"] = info.get("still_in", False)
+        row["spark"] = info.get("spark", "")
+        row["title_pct"] = info.get("title_pct", 0)
+        row["podium_pct"] = info.get("podium_pct", 0)
+        rows.append(row)
+    return rows
+
+
+async def _page(kind: str) -> dict:
+    grid = await get_grid()
+    drivers_a, constructors_a, forecast = await full_analysis(grid)
+    analysis = constructors_a if kind == "constructors" else drivers_a
+    brief = await get_brief(grid, kind)
+    view = dict(grid)
+    view["page"] = kind
+    view["brief"] = brief
+    view["analysis"] = analysis
+    view["forecast_runs"] = forecast.get("runs", 0)
+    view["refresh"] = await cache.get_json("f1:meta:refresh") or {}
+    if kind == "constructors":
+        extra = {row["id"]: row for row in analysis.get("contenders") or []}
+        view["teams"] = _rows(grid.get("constructors") or [], extra, "id")
+    else:
+        extra = {row["code"]: row for row in analysis.get("contenders") or []}
+        view["drivers"] = _rows(grid.get("drivers") or [], extra, "code")
+    return view
 
 
 @app.get("/health")
@@ -105,21 +82,67 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 async def ready() -> JSONResponse:
+    if settings.REDIS_URL and not await cache.ping():
+        return JSONResponse({"status": "not-ready", "reason": "redis"}, status_code=503)
     payload = await get_grid()
     if payload.get("drivers"):
-        return JSONResponse({"status": "ready", "source": payload.get("source")})
+        return JSONResponse(
+            {
+                "status": "ready",
+                "source": payload.get("source"),
+                "cache": cache.backend(),
+            }
+        )
     return JSONResponse({"status": "not-ready"}, status_code=503)
 
 
 @app.get("/api/standings")
-async def standings() -> dict[str, Any]:
+async def standings() -> dict:
     return await get_grid()
+
+
+@app.get("/api/analysis")
+async def analysis() -> dict:
+    grid = await get_grid()
+    drivers, constructors, forecast = await full_analysis(grid)
+    return {"drivers": drivers, "constructors": constructors, "forecast": forecast}
+
+
+@app.get("/api/forecast")
+async def forecast() -> dict:
+    grid = await get_grid()
+    _drivers, _constructors, payload = await full_analysis(grid)
+    return payload
+
+
+@app.get("/api/brief")
+async def brief() -> dict:
+    grid = await get_grid()
+    return await get_brief(grid)
+
+
+@app.get("/api/refresh")
+async def refresh(force: bool = False) -> dict:
+    return await sync_standings(force=force)
+
+
+@app.post("/api/ask")
+async def ask_route(body: AskBody) -> dict:
+    grid = await get_grid()
+    return await ask(grid, body.question)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    payload = await get_grid()
     return TEMPLATES.TemplateResponse(
-        "index.html",
-        {"request": request, "grid": payload},
+        "championship.html",
+        {"request": request, "grid": await _page("drivers")},
+    )
+
+
+@app.get("/constructors", response_class=HTMLResponse)
+async def constructors(request: Request) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(
+        "championship.html",
+        {"request": request, "grid": await _page("constructors")},
     )

@@ -15,4 +15,4 @@ jobs:
       - name: Validate Kubernetes manifests
         run: |
           docker run --rm -v "$PWD/k8s:/k8s:ro" ghcr.io/yannh/kubeconform:latest \
-            -strict -summary /k8s
+            -strict -ignore-filename-pattern secret.example.yaml -summary /k8s

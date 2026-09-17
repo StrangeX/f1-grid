@@ -25,13 +25,20 @@ spec:
           envFrom:
             - configMapRef:
                 name: f1-grid-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: f1-grid-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
           resources:
             requests:
               cpu: 50m
               memory: 64Mi
             limits:
               cpu: 250m
-              memory: 128Mi
+              memory: 192Mi
           livenessProbe:
             httpGet:
               path: /health

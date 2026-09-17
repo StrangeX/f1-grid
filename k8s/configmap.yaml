@@ -5,4 +5,9 @@ metadata:
   namespace: f1-grid
 data:
   F1_SEASON: "current"
-  F1_CACHE_TTL: "300"
+  F1_CACHE_TTL: "21600"
+  F1_SIMS: "4000"
+  F1_POLL_IDLE_SEC: "1800"
+  F1_POLL_RACE_SEC: "600"
+  REDIS_URL: "redis://redis:6379/0"
+  OPENAI_MODEL: "gpt-4o-mini"
